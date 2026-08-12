@@ -17,8 +17,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Restore NazarVPN V2 source
-        run: base64 -d app/src/main/MainActivity.java.gz.b64 | gzip -d > app/src/main/java/com/nazarvpn/app/MainActivity.java
       - name: Build debug APK
         run: gradle :app:assembleDebug --stacktrace
       - name: Verify APK details
