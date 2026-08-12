@@ -30,7 +30,8 @@ html,body{margin:0;height:100%;font-family:system-ui,sans-serif;background:#f7f7
 
     // Do not let the optional Excel library block the login screen.
     html=html.replace(/<script src="https:\/\/cdn\.jsdelivr\.net\/npm\/xlsx@0\.18\.5\/dist\/xlsx\.full\.min\.js">[\s\S]*?<\/script>/i,'');
-    html=html.replace('</body>',`<script>setTimeout(function(){var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';s.async=true;document.head.appendChild(s);},1200);<\/script></body>`);
+    html=html.replace('</head>',`<link rel="stylesheet" href="./ui-v8.css?v=9b40f0ea"></head>`);
+    html=html.replace('</body>',`<script>setTimeout(function(){var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';s.async=true;document.head.appendChild(s);},1200);<\/script><script src="./ui-v8.js?v=52a58834"><\/script></body>`);
 
     document.open();
     document.write(html);
@@ -41,6 +42,6 @@ html,body{margin:0;height:100%;font-family:system-ui,sans-serif;background:#f7f7
   }
 })();
 </script>
-<!-- build-trigger: 2026-08-12T22:35+05:00 -->
+<!-- executive-ui-v8 -->
 </body>
 </html>
