@@ -4,7 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Dawat ERP</title>
-<style>html,body{margin:0;height:100%;font-family:system-ui,sans-serif;background:#f7f7f7}#msg{padding:28px;font-size:18px}</style>
+<style>
+html,body{margin:0;height:100%;font-family:system-ui,sans-serif;background:#f7f7f7}
+#msg{padding:28px;font-size:18px;white-space:pre-wrap}
+</style>
 </head>
 <body>
 <div id="msg">Loading Dawat ERP…</div>
@@ -13,12 +16,23 @@
   try{
     const r=await fetch('https://cdidgehrcnapaqdxmhok.supabase.co/functions/v1/erp-app-source',{cache:'no-store'});
     if(!r.ok) throw new Error('HTTP '+r.status);
-    const html=await r.text();
+    const source=await r.text();
+    const m=source.match(/atob\("([A-Za-z0-9+/=]+)"\)/);
+    if(!m) throw new Error('ERP bundle not found');
+
+    const raw=atob(m[1]);
+    const bytes=new Uint8Array(raw.length);
+    for(let i=0;i<raw.length;i++) bytes[i]=raw.charCodeAt(i);
+
+    const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+    const html=await new Response(stream).text();
+
     document.open();
     document.write(html);
     document.close();
   }catch(e){
-    document.getElementById('msg').textContent='ERP loading error: '+String(e);
+    const el=document.getElementById('msg');
+    if(el) el.textContent='ERP loading error: '+String(e);
   }
 })();
 </script>
