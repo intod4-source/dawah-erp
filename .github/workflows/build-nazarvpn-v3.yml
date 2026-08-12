@@ -15,8 +15,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Prepare Android SDK
-        uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v3
       - name: Install build packages
         run: |
           yes | sdkmanager --licenses >/dev/null || true
@@ -31,23 +30,37 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           p=Path('engine/main/src/ui/AndroidManifest.xml')
-          s=p.read_text().replace('android:name=".activities.MainActivity"','android:name=".activities.NazarVPNActivity"',1)
-          p.write_text(s)
+          p.write_text(p.read_text().replace('android:name=".activities.MainActivity"','android:name=".activities.NazarVPNActivity"',1))
           p=Path('engine/main/build.gradle.kts')
-          s=p.read_text().replace('defaultConfig {','defaultConfig {\n        applicationId = "com.nazarvpn.app"',1).replace('versionName = "0.7.64"','versionName = "3.0.0"',1)
-          p.write_text(s)
+          p.write_text(p.read_text().replace('defaultConfig {','defaultConfig {\n        applicationId = "com.nazarvpn.app"',1).replace('versionName = "0.7.64"','versionName = "3.0.0"',1))
           for f in Path('engine/main/src').rglob('strings.xml'):
               try:
                   t=f.read_text().replace('<string name="app">OpenVPN for Android</string>','<string name="app">NazarVPN</string>').replace('<string name="app_name">OpenVPN for Android</string>','<string name="app_name">NazarVPN</string>')
                   f.write_text(t)
               except Exception: pass
           PY
-      - name: Build universal APK
-        working-directory: engine
-        run: ./gradlew :main:assembleUiOvpn23Debug --stacktrace --no-daemon
+      - name: Build and capture log
+        run: |
+          set +e
+          cd engine
+          ./gradlew :main:assembleUiOvpn23Debug --stacktrace --no-daemon > ../v3-build.log 2>&1
+          CODE=$?
+          cd ..
+          echo "$CODE" > v3-build.exit
+          tail -n 250 v3-build.log || true
+          exit 0
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NazarVPN-V3-build-log
+          path: |
+            v3-build.log
+            v3-build.exit
+      - name: Fail if Gradle failed
+        run: test "$(cat v3-build.exit)" = "0"
       - name: Collect and verify APK
         run: |
-          find engine/main/build/outputs/apk -type f -name '*.apk' -print
           APK=$(find engine/main/build/outputs/apk -type f -name '*universal*.apk' | head -n 1)
           if [ -z "$APK" ]; then APK=$(find engine/main/build/outputs/apk -type f -name '*.apk' | head -n 1); fi
           test -n "$APK"
