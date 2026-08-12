@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dawat ERP</title>
+<style>html,body{margin:0;height:100%;font-family:system-ui,sans-serif;background:#f7f7f7}#msg{padding:28px;font-size:18px}</style>
+</head>
+<body>
+<div id="msg">Loading Dawat ERP…</div>
+<script>
+(async()=>{
+  try{
+    const r=await fetch('https://cdidgehrcnapaqdxmhok.supabase.co/functions/v1/erp-app-source',{cache:'no-store'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const html=await r.text();
+    document.open();
+    document.write(html);
+    document.close();
+  }catch(e){
+    document.getElementById('msg').textContent='ERP loading error: '+String(e);
+  }
+})();
+</script>
+</body>
+</html>
