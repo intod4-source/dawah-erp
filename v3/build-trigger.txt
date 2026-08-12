@@ -1,1 +1,1 @@
-NazarVPN V3 VPN Gate build trigger
+NazarVPN V3 VPN Gate build retry with log capture
