@@ -23,9 +23,14 @@ html,body{margin:0;height:100%;font-family:system-ui,sans-serif;background:#f7f7
     const raw=atob(m[1]);
     const bytes=new Uint8Array(raw.length);
     for(let i=0;i<raw.length;i++) bytes[i]=raw.charCodeAt(i);
+    if(typeof DecompressionStream!=='function') throw new Error('This browser does not support gzip decompression');
 
     const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
-    const html=await new Response(stream).text();
+    let html=await new Response(stream).text();
+
+    // Do not let the optional Excel library block the login screen.
+    html=html.replace(/<script src="https:\/\/cdn\.jsdelivr\.net\/npm\/xlsx@0\.18\.5\/dist\/xlsx\.full\.min\.js">[\s\S]*?<\/script>/i,'');
+    html=html.replace('</body>',`<script>setTimeout(function(){var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';s.async=true;document.head.appendChild(s);},1200);<\/script></body>`);
 
     document.open();
     document.write(html);
