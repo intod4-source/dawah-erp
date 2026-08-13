@@ -3,7 +3,12 @@ name: Build NazarVPN V5
 on:
   push:
     branches: [nazarvpn-v5-global]
+    paths-ignore:
+      - 'v5-relays/**'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -11,6 +16,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: nazarvpn-v5-global
       - uses: actions/setup-java@v5
         with:
           distribution: temurin
@@ -25,14 +32,100 @@ jobs:
           sudo apt-get install -y -qq swig cmake ninja-build curl
       - name: Checkout OpenVPN Android engine
         run: git clone --depth 1 --recurse-submodules https://github.com/schwabe/ics-openvpn.git engine
-      - name: Download and validate relay snapshot
+      - name: Refresh and validate VPN Gate snapshot
         run: |
           set -euo pipefail
-          mkdir -p engine/main/src/ui/assets
-          curl --fail --location --retry 5 --retry-delay 2 --connect-timeout 10 --max-time 45 -A 'NazarVPN-V5-Build/5.0' 'https://www.vpngate.net/api/iphone/' -o engine/main/src/ui/assets/nazarvpn_relays.csv
-          grep -q '^#HostName,IP,Score,Ping,Speed,CountryLong,CountryShort' engine/main/src/ui/assets/nazarvpn_relays.csv
-          ROWS=$(grep -vcE '^\*|^#|^$' engine/main/src/ui/assets/nazarvpn_relays.csv)
+          mkdir -p v5-relays
+          curl --fail --location --retry 5 --retry-delay 2 --connect-timeout 10 --max-time 45 -A 'NazarVPN-V5-Build/5.0' 'https://www.vpngate.net/api/iphone/' -o v5-relays/vpngate.csv
+          grep -q '^#HostName,IP,Score,Ping,Speed,CountryLong,CountryShort' v5-relays/vpngate.csv
+          ROWS=$(grep -vcE '^\*|^#|^$' v5-relays/vpngate.csv)
           test "$ROWS" -ge 10
-          echo "Validated $ROWS relay rows for bundled fallback"
-      - name: Apply NazarVPN V5 source patch
-        run: python3 -c "import base64;exec(base64.b64decode('CmZyb20gcGF0aGxpYiBpbXBvcnQgUGF0aAphPVBhdGgoImVuZ2luZS9tYWluL3NyYy91aS9qYXZhL2RlL2JsaW5rdC9vcGVudnBuL2FjdGl2aXRpZXMvTmF6YXJWUE5BY3Rpdml0eS5qYXZhIikKcz1hLnJlYWRfdGV4dCgpCnM9cy5yZXBsYWNlKCJpbXBvcnQgYW5kcm9pZC5hcHAuQWN0aXZpdHk7IiwiaW1wb3J0IGFuZHJvaWQuYXBwLkFjdGl2aXR5O1xuaW1wb3J0IGFuZHJvaWQuTWFuaWZlc3Q7IiwxKQpzPXMucmVwbGFjZSgiaW1wb3J0IGFuZHJvaWQub3MuQnVuZGxlOyIsImltcG9ydCBhbmRyb2lkLm9zLkJ1bmRsZTtcbmltcG9ydCBhbmRyb2lkLm9zLkJ1aWxkOyIsMSkKcz1zLnJlcGxhY2UoImltcG9ydCBhbmRyb2lkLnV0aWwuQmFzZTY0OyIsImltcG9ydCBhbmRyb2lkLnV0aWwuQmFzZTY0O1xuaW1wb3J0IGFuZHJvaWQuY29udGVudC5wbS5QYWNrYWdlTWFuYWdlcjsiLDEpCnM9cy5yZXBsYWNlKCJwcml2YXRlIFZwblByb2ZpbGUgcGVuZGluZ1Byb2ZpbGU7IiwicHJpdmF0ZSBWcG5Qcm9maWxlIHBlbmRpbmdQcm9maWxlO1xuICAgIHByaXZhdGUgUnVubmFibGUgY2FuZGlkYXRlV2F0Y2hkb2c7IHByaXZhdGUgaW50IGNhbmRpZGF0ZVdhdGNoZG9nSW5kZXg9LTE7IiwxKQpzPXMucmVwbGFjZSgnRmFzdCBhdXRvLXNlbGVjdGlvbiDigKIgTGl2ZSByZWxheSBxdWFsaXR5IOKAoiBPcHRpb25hbCBhY2NvdW50JywnU21hcnQgZmFpbG92ZXIg4oCiIExpdmUgcmVsYXkgaGVhbHRoIOKAoiBQcml2YWN5LWZpcnN0IGNvbm5lY3Rpb24gZmxvdycpCnM9cy5yZXBsYWNlKCdGaW5kaW5nIGZhc3Rlc3Qgc2VydmVy4oCmJywnQ2hlY2tpbmcgc2VjdXJlIHJvdXRlc+KApiIpCnM9cy5yZXBsYWNlKCdFbWJlZGRlZCBPcGVuVlBOIC8gQW5kcm9pZCBWcG5TZXJ2aWNlJywnT3BlblZQTiBlbmdpbmUg4oCiIEFuZHJvaWQgc2VjdXJlIFZQTiB0dW5uZWwnKQpvbGQ9J3ByaXZhdGUgdm9pZCByZXF1ZXN0VnBuUGVybWlzc2lvbigpe0ludGVudCBpPVZwblNlcnZpY2UucHJlcGFyZSh0aGlzKTtpZihpIT1udWxsKXN0YXJ0QWN0aXZpdHlGb3JSZXN1bHQoaSxSRVFfVlBOKTtlbHNlIHN0YXJ0UGVuZGluZygpO30nCm5ldz0ncHJpdmF0ZSB2b2lkIHJlcXVlc3RWcG5QZXJtaXNzaW9uKCl7SW50ZW50IGk9VnBuU2VydmljZS5wcmVwYXJlKHRoaXMpO2lmKGk9PW51bGwpe3JlcXVlc3ROb3RpZmljYXRpb25QZXJtaXNzaW9uSWZOZWVkZWQoKTtzdGFydFBlbmRpbmcoKTtyZXR1cm47fWlmKCFwcmVmcy5nZXRCb29sZWFuKCJ2cG5fcGVybWlzc2lvbl9leHBsYWluZWQiLGZhbHNlKSl7bmV3IEFsZXJ0RGlhbG9nLkJ1aWxkZXIodGhpcykuc2V0VGl0bGUoIkFsbG93IHNlY3VyZSBWUE4gY29ubmVjdGlvbiIpLnNldE1lc3NhZ2UoIkFuZHJvaWQgcmVxdWlyZXMgb25lLXRpbWUgYXBwcm92YWwgYmVmb3JlIE5hemFyVlBOIGNhbiBjcmVhdGUgYSBWUE4gdHVubmVsLiBUYXAgQ29udGludWUsIHRoZW4gYXBwcm92ZSB0aGUgQW5kcm9pZCBWUE4gY29ubmVjdGlvbiBkaWFsb2cuIikuc2V0UG9zaXRpdmVCdXR0b24oIkNvbnRpbnVlIixkLHcpLT57cHJlZnMuZWRpdCgpLnB1dEJvb2xlYW4oInZwbl9wZXJtaXNzaW9uX2V4cGxhaW5lZCIsdHJ1ZSkuYXBwbHkoKTtyZXF1ZXN0VnBuUGVybWlzc2lvbkFjdHVhbCgpO30pLnNldE5lZ2F0aXZlQnV0dG9uKCJOb3Qgbm93IixkLHcpLT5mYWlsQ29ubmVjdCgiVlBOIHBlcm1pc3Npb24gaXMgcmVxdWlyZWQgdG8gY29ubmVjdC4iKSkuc2hvdygpO31lbHNlIHJlcXVlc3RWcG5QZXJtaXNzaW9uQWN0dWFsKCk7fVxuICAgIHByaXZhdGUgdm9pZCByZXF1ZXN0VnBuUGVybWlzc2lvbkFjdHVhbCgpe0ludGVudCBpPVZwblNlcnZpY2UucHJlcGFyZSh0aGlzKTtpZihpIT1udWxsKXN0YXJ0QWN0aXZpdHlGb3JSZXN1bHQoaSxSRVFfVlBOKTtlbHNle3JlcXVlc3ROb3RpZmljYXRpb25QZXJtaXNzaW9uSWZOZWVkZWQoKTtzdGFydFBlbmRpbmcoKTt9fVxuICAgIHByaXZhdGUgdm9pZCByZXF1ZXN0Tm90aWZpY2F0aW9uUGVybWlzc2lvbklmTmVlZGVkKCl7aWYoQnVpbGQuVkVSU0lPTi5TREtfSU5UPj0zMyYmY2hlY2tTZWxmUGVybWlzc2lvbihNYW5pZmVzdC5wZXJtaXNzaW9uLlBPU1RfTk9USUZJQ0FUSU9OUykhPVBhY2thZ2VNYW5hZ2VyLlBFUk1JU1NJT05fR1JBTlRFRClyZXF1ZXN0UGVybWlzc2lvbnMobmV3IFN0cmluZ1tde01hbmlmZXN0LnBlcm1pc3Npb24uUE9TVF9OT1RJRklDQVRJT05TfSw1MDIpO30nCmlmIG9sZCBub3QgaW4gczogcmFpc2UgU3lzdGVtRXhpdCgicGVybWlzc2lvbiBwYXR0ZXJuIG1pc3NpbmciKQpzPXMucmVwbGFjZShvbGQsbmV3LDEpCnM9cy5yZXBsYWNlKCdpZihyZXN1bHQ9PVJFU1VMVF9PSylzdGFydFBlbmRpbmcoKTtlbHNlIGZhaWxDb25uZWN0KCJWUE4gcGVybWlzc2lvbiBpcyByZXF1aXJlZC4iKTsnLCdpZihyZXN1bHQ9PVJFU1VMVF9PSyl7cmVxdWVzdE5vdGlmaWNhdGlvblBlcm1pc3Npb25JZk5lZWRlZCgpO3N0YXJ0UGVuZGluZygpO31lbHNlIGZhaWxDb25uZWN0KCJWUE4gcGVybWlzc2lvbiBpcyByZXF1aXJlZC4iKTsnLDEpCm9sZHN0YXJ0PSdwcml2YXRlIHZvaWQgc3RhcnRQZW5kaW5nKCl7dHJ5e1ZQTkxhdW5jaEhlbHBlci5zdGFydE9wZW5WcG4ocGVuZGluZ1Byb2ZpbGUsZ2V0QXBwbGljYXRpb25Db250ZXh0KCksIk5hemFyVlBOIFNtYXJ0IENvbm5lY3QiLHRydWUpO3N0YXR1c0lmKCJDb25uZWN0aW5nIHRvICIrYWN0aXZlQ291bnRyeSsi4oCmIik7fWNhdGNoKEV4Y2VwdGlvbiBlKXttYWluLnBvc3REZWxheWVkKHRoaXM6OnN0YXJ0TmV4dENhbmRpZGF0ZSwzMDApO319JwpuZXdzdGFydD0ncHJpdmF0ZSB2b2lkIHN0YXJ0UGVuZGluZygpe3RyeXtWUE5MYXVuY2hIZWxwZXIuc3RhcnRPcGVuVnBuKHBlbmRpbmdQcm9maWxlLGdldEFwcGxpY2F0aW9uQ29udGV4dCgpLCJOYXphclZQTiBTbWFydCBDb25uZWN0Iix0cnVlKTtzdGF0dXNJZigiQ29ubmVjdGluZyB0byAiK2FjdGl2ZUNvdW50cnkrIuKApiIpO2FybUNhbmRpZGF0ZVdhdGNoZG9nKCk7fWNhdGNoKEV4Y2VwdGlvbiBlKXtjYW5jZWxDYW5kaWRhdGVXYXRjaGRvZygpO21haW4ucG9zdERlbGF5ZWQodGhpcyO6c3RhcnROZXh0Q2FuZGlkYXRlLDMwMCk7fX1cbiAgICBwcml2YXRlIHZvaWQgYXJtQ2FuZGlkYXRlV2F0Y2hkb2coKXtjYW5jZWxDYW5kaWRhdGVXYXRjaGRvZygpO2NhbmRpZGF0ZVdhdGNoZG9nSW5kZXg9Y2FuZGlkYXRlSW5kZXg7Y2FuZGlkYXRlV2F0Y2hkb2c9KCktPntpZihjb25uZWN0aW5nJiYhY29ubmVjdGVkJiZjYW5kaWRhdGVXYXRjaGRvZ0luZGV4PT1jYW5kaWRhdGVJbmRleCl7c3RhdHVzSWYoIlJlbGF5IHRpbWVkIG91dCDigJQgdHJ5aW5nIGFub3RoZXLigKYiKTt1c2VyRGlzY29ubmVjdD10cnVlO3RyeXtzdGFydEFjdGl2aXR5KG5ldyBJbnRlbnQodGhpcyxkZS5ibGlua3Qub3BlbnZwbi5hY3Rpdml0aWVzLkRpc2Nvbm5lY3RWUE4uY2xhc3MpKTt9Y2F0Y2goRXhjZXB0aW9uIGlnbm9yZWQpe31tYWluLnBvc3REZWxheWVkKCgpLT57dXNlckRpc2Nvbm5lY3Q9ZmFsc2U7c3RhcnROZXh0Q2FuZGlkYXRlKCk7fSwxMjAwKTt9fTttYWluLnBvc3REZWxheWVkKGNhbmRpZGF0ZVdhdGNoZG9nLDEyMDAwKTt9XG4gICAgcHJpdmF0ZSB2b2lkIGNhbmNlbENhbmRpZGF0ZVdhdGNoZG9nKCl7aWYoY2FuZGlkYXRlV2F0Y2hkb2chPW51bGwpbWFpbi5yZW1vdmVDYWxsYmFja3MoY2FuZGlkYXRlV2F0Y2hkb2cpO2NhbmRpZGF0ZVdhdGNoZG9nPW51bGw7Y2FuZGlkYXRlV2F0Y2hkb2dJbmRleD0tMTt9JwppZiBvbGRzdGFydCBub3QgaW4gczogcmFpc2UgU3lzdGVtRXhpdCgic3RhcnQgcGF0dGVybiBtaXNzaW5nIikKcz1zLnJlcGxhY2Uob2xkc3RhcnQsbmV3c3RhcnQsMSkKcz1zLnJlcGxhY2UoJ2lmKGxldmVsPT1Db25uZWN0aW9uU3RhdHVzLkxFVkVMX0NPTk5FQ1RFRCl7Y29ubmVjdGVkPXRydWU7JywnaWYobGV2ZWw9PUNvbm5lY3Rpb25TdGF0dXMuTEVWRUxfQ09OTkVDVEVEKXtjYW5jZWxDYW5kaWRhdGVXYXRjaGRvZygpO2Nvbm5lY3RlZD10cnVlOycsMSkKcz1zLnJlcGxhY2UoJ31lbHNlIGlmKGxldmVsPT1Db25uZWN0aW9uU3RhdHVzLkxFVkVMX05PVENPTk5FQ1RFRE58fGxldmVsPT1Db25uZWN0aW9uU3RhdHVzLkxFVkVMX0FVVEhfRkFJTEVEKXtjb25uZWN0ZWQ9ZmFsc2U7JywnfWVsc2UgaWYobGV2ZWw9PUNvbm5lY3Rpb25TdGF0dXMuTEVWRUxfTk9UQ09OTkVDVEVEfHxsZXZlbD09Q29ubmVjdGlvblN0YXR1cy5MRVZFTF9BVVRIX0ZBSUxFRCl7Y2FuY2VsQ2FuZGlkYXRlV2F0Y2hkb2coKTtjb25uZWN0ZWQ9ZmFsc2U7JywxKQpvbGRmZXRjaD0ncHJpdmF0ZSBMaXN0PFJlbGF5PiBmZXRjaFJlbGF5cyhib29sZWFuIHdhcm0pIHRocm93cyBFeGNlcHRpb257aWYoIXJlbGF5Q2FjaGUuaXNFbXB0eSgpJiZTeXN0ZW0uY3VycmVudFRpbWVNaWxsaXMoKS1sYXN0UmVsYXlGZXRjaDxDQUNIRV9NUylyZXR1cm4gbmV3IEFycmF5TGlzdDw+KHJlbGF5Q2FjaGUpO0h0dHBVUkxDb25uZWN0aW9uIGM9KEh0dHBVUkxDb25uZWN0aW9uKW5ldyBVUkwoVlBOR0FURSkub3BlbkNvbm5lY3Rpb24oKTtjLnNldENvbm5lY3RUaW1lb3V0KDYwMDApO2Muc2V0UmVhZFRpbWVvdXQoOTAwMCk7Yy5zZXRSZXF1ZXN0UHJvcGVydHkoIlVzZXItQWdlbnQiLCJOYXphclZQTi80LjAgQW5kcm9pZCIpO2lmKGMuZ2V0UmVzcG9uc2VDb2RlKCkhPTIwMCl0aHJvdyBuZXcgRXhjZXB0aW9uKCJWUE4gZGlyZWN0b3J5IHVuYXZhaWxhYmxlIik7TGlzdDxSZWxheT4gb3V0PW5ldyBBcnJheUxpc3Q8PigpO3RyeShCdWZmZXJlZFJlYWRlciBicj1uZXcgQnVmZmVyZWRSZWFkZXIobmV3IElucHV0U3RyZWFtUmVhZGVyKGMuZ2V0SW5wdXRTdHJlYW0oKSxTdGFuZGFyZENoYXJzZXRzLlVURl84KSkpe1N0cmluZyBsaW5lO3doaWxlKChsaW5lPWJyLnJlYWRMaW5lKCkpIT1udWxsKXtpZihsaW5lLnN0YXJ0c1dpdGgoIioiKXx8bGluZS5zdGFydHNXaXRoKCIjIil8fGxpbmUudHJpbSgpLmlzRW1wdHkoKSljb250aW51ZTtTdHJpbmdbXSBwPWxpbmUuc3BsaXQoIiwiLDE1KTtpZihwLmxlbmd0aDwxNSljb250aW51ZTt0cnl7UmVsYXkgcj1uZXcgUmVsYXkoKTtyLmhvc3Q9cFswXTtyLmlwPXBbMV07ci5zY29yZT1wYXJzZUxvbmC');"
+          echo "Validated $ROWS live relay rows"
+          git config user.name 'NazarVPN Relay Bot'
+          git config user.email 'nazarvpn-relay-bot@users.noreply.github.com'
+          git add v5-relays/vpngate.csv
+          if ! git diff --cached --quiet; then
+            git commit -m 'Refresh NazarVPN relay snapshot'
+            git push origin HEAD:nazarvpn-v5-global
+          fi
+      - name: Apply NazarVPN V5 branding and reliability changes
+        run: |
+          cp v4/NazarVPNActivity.java engine/main/src/ui/java/de/blinkt/openvpn/activities/NazarVPNActivity.java
+          python3 - <<'PY'
+          from pathlib import Path
+          a=Path('engine/main/src/ui/java/de/blinkt/openvpn/activities/NazarVPNActivity.java')
+          s=a.read_text()
+          s=s.replace('import android.app.Activity;', 'import android.app.Activity;\nimport android.Manifest;', 1)
+          s=s.replace('import android.os.Bundle;', 'import android.os.Bundle;\nimport android.os.Build;', 1)
+          s=s.replace('import android.util.Base64;', 'import android.util.Base64;\nimport android.content.pm.PackageManager;', 1)
+          s=s.replace('private static final String VPNGATE="https://www.vpngate.net/api/iphone/";', 'private static final String VPNGATE="https://raw.githubusercontent.com/intod4-source/dawah-erp/nazarvpn-v5-global/v5-relays/vpngate.csv";', 1)
+          s=s.replace('NazarVPN/4.0 Android', 'NazarVPN/5.0 Android')
+          s=s.replace('Fast auto-selection • Live relay quality • Optional account', 'Smart failover • Live relay health • Secure Android VPN')
+          s=s.replace('Finding fastest server…', 'Checking available secure routes…')
+          s=s.replace('Embedded OpenVPN / Android VpnService', 'OpenVPN engine • Android VpnService • Automatic relay fallback')
+          s=s.replace('if(candidates.size()>=6)break;', 'if(candidates.size()>=10)break;', 1)
+          s=s.replace('String ovpn=new String(Base64.decode(relay.config,Base64.DEFAULT),StandardCharsets.UTF_8);', 'String ovpn=new String(Base64.decode(relay.config,Base64.DEFAULT),StandardCharsets.UTF_8)+"\\nconnect-timeout 8\\nconnect-retry-max 1\\n";', 1)
+          old='private void requestVpnPermission(){Intent i=VpnService.prepare(this);if(i!=null)startActivityForResult(i,REQ_VPN);else startPending();}'
+          new='private void requestVpnPermission(){Intent i=VpnService.prepare(this);if(i==null){requestNotificationPermissionIfNeeded();startPending();return;}if(!prefs.getBoolean("vpn_permission_explained",false)){new AlertDialog.Builder(this).setTitle("Allow VPN connection").setMessage("Android requires your approval before NazarVPN can create a secure VPN tunnel. Tap Continue, then approve the Android VPN dialog. This is a system permission and NazarVPN cannot grant it silently.").setPositiveButton("Continue",(d,w)->{prefs.edit().putBoolean("vpn_permission_explained",true).apply();requestVpnPermissionActual();}).setNegativeButton("Cancel",(d,w)->failConnect("VPN permission is required to connect.")).show();}else requestVpnPermissionActual();} private void requestVpnPermissionActual(){Intent i=VpnService.prepare(this);if(i!=null)startActivityForResult(i,REQ_VPN);else{requestNotificationPermissionIfNeeded();startPending();}} private void requestNotificationPermissionIfNeeded(){if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},502);}'
+          if old not in s: raise SystemExit('VPN permission pattern not found')
+          s=s.replace(old,new,1)
+          s=s.replace('if(result==RESULT_OK)startPending();else failConnect("VPN permission is required.");', 'if(result==RESULT_OK){requestNotificationPermissionIfNeeded();startPending();}else failConnect("VPN permission is required.");', 1)
+          a.write_text(s)
+
+          p=Path('engine/main/src/ui/AndroidManifest.xml')
+          m=p.read_text().replace('android:name=".activities.MainActivity"','android:name=".activities.NazarVPNActivity"',1)
+          if 'android.permission.POST_NOTIFICATIONS' not in m:
+              pos=m.find('>')+1
+              m=m[:pos]+'\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />'+m[pos:]
+          p.write_text(m)
+
+          p=Path('engine/main/build.gradle.kts')
+          g=p.read_text().replace('defaultConfig {','defaultConfig {\n        applicationId = "com.nazarvpn.app"',1).replace('versionName = "0.7.64"','versionName = "5.0.0"',1)
+          p.write_text(g)
+
+          for f in Path('engine/main/src').rglob('strings.xml'):
+              try:
+                  t=f.read_text().replace('<string name="app">OpenVPN for Android</string>','<string name="app">NazarVPN</string>').replace('<string name="app_name">OpenVPN for Android</string>','<string name="app_name">NazarVPN</string>')
+                  f.write_text(t)
+              except Exception: pass
+
+          gp=Path('engine/gradle.properties')
+          txt=gp.read_text() if gp.exists() else ''
+          lines=[ln for ln in txt.splitlines() if not ln.startswith('org.gradle.jvmargs=') and not ln.startswith('org.gradle.workers.max=')]
+          lines += ['org.gradle.jvmargs=-Xmx5g -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8','org.gradle.workers.max=2','org.gradle.parallel=false']
+          gp.write_text('\n'.join(lines)+'\n')
+          PY
+      - name: Build universal APK and capture log
+        run: |
+          set +e
+          cd engine
+          ./gradlew :main:assembleUiOvpn23Debug --stacktrace --no-daemon > ../v5-build.log 2>&1
+          CODE=$?
+          cd ..
+          echo "$CODE" > v5-build.exit
+          tail -n 260 v5-build.log || true
+          exit 0
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: NazarVPN-V5-build-log
+          path: |
+            v5-build.log
+            v5-build.exit
+      - name: Fail if Gradle failed
+        run: test "$(cat v5-build.exit)" = "0"
+      - name: Collect and verify APK
+        run: |
+          APK=$(find engine/main/build/outputs/apk -type f -name '*universal*.apk' | head -n 1)
+          if [ -z "$APK" ]; then APK=$(find engine/main/build/outputs/apk -type f -name '*.apk' | head -n 1); fi
+          test -n "$APK"
+          cp "$APK" NazarVPN_V5_GLOBAL.apk
+          unzip -t NazarVPN_V5_GLOBAL.apk >/dev/null
+          ls -lh NazarVPN_V5_GLOBAL.apk
+          sha256sum NazarVPN_V5_GLOBAL.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NazarVPN-V5-GLOBAL
+          path: NazarVPN_V5_GLOBAL.apk
+          if-no-files-found: error
