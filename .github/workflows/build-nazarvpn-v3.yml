@@ -1,8 +1,8 @@
-name: Build NazarVPN V4.1
+name: Build NazarVPN V5
 
 on:
   push:
-    branches: [nazarvpn-v4-auth-admin]
+    branches: [nazarvpn-v5-global]
   workflow_dispatch:
 
 jobs:
@@ -22,74 +22,150 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platforms;android-37" "build-tools;37.0.0" "ndk;30.0.14904198" || true
           sudo apt-get update -qq
-          sudo apt-get install -y -qq swig cmake ninja-build
+          sudo apt-get install -y -qq swig cmake ninja-build curl
       - name: Checkout OpenVPN Android engine
         run: git clone --depth 1 --recurse-submodules https://github.com/schwabe/ics-openvpn.git engine
-      - name: Apply NazarVPN V4.1 branding, UI and relay proxy fix
+      - name: Download verified VPN Gate relay snapshot
+        run: |
+          set -euo pipefail
+          mkdir -p engine/main/src/ui/assets
+          curl --fail --location --retry 5 --retry-delay 2 --connect-timeout 10 --max-time 45 \
+            -A 'NazarVPN-V5-Build/5.0' 'https://www.vpngate.net/api/iphone/' \
+            -o engine/main/src/ui/assets/nazarvpn_relays.csv
+          grep -q '^#HostName,IP,Score,Ping,Speed,CountryLong,CountryShort' engine/main/src/ui/assets/nazarvpn_relays.csv
+          ROWS=$(grep -vcE '^\*|^#|^$' engine/main/src/ui/assets/nazarvpn_relays.csv)
+          test "$ROWS" -ge 10
+          echo "Bundled $ROWS verified relay rows"
+      - name: Apply NazarVPN V5 reliability, permission UX and branding
         run: |
           cp v4/NazarVPNActivity.java engine/main/src/ui/java/de/blinkt/openvpn/activities/NazarVPNActivity.java
           python3 - <<'PY'
           from pathlib import Path
           a=Path('engine/main/src/ui/java/de/blinkt/openvpn/activities/NazarVPNActivity.java')
           s=a.read_text()
-          s=s.replace('private static final String VPNGATE="https://www.vpngate.net/api/iphone/";', 'private static final String VPNGATE="https://cdidgehrcnapaqdxmhok.supabase.co/functions/v1/nazarvpn-relays";', 1)
-          needle='c.setRequestProperty("User-Agent","NazarVPN/4.0 Android");'
-          repl='c.setRequestProperty("User-Agent","NazarVPN/4.1 Android");c.setRequestProperty("apikey",KEY);'
-          s=s.replace(needle,repl,1)
-          a.write_text(s)
 
+          s=s.replace('import android.app.Activity;', 'import android.app.Activity;\nimport android.Manifest;')
+          s=s.replace('import android.os.Bundle;', 'import android.os.Bundle;\nimport android.os.Build;')
+          s=s.replace('import android.util.Base64;', 'import android.util.Base64;\nimport android.content.pm.PackageManager;')
+          s=s.replace('import de.blinkt.openvpn.core.ProfileManager;', 'import de.blinkt.openvpn.core.ProfileManager;\nimport de.blinkt.openvpn.core.Preferences;')
+
+          s=s.replace('private static final String VPNGATE="https://www.vpngate.net/api/iphone/";',
+'''private static final String VPNGATE="https://www.vpngate.net/api/iphone/";
+    private static final String RELAY_PROXY="https://cdidgehrcnapaqdxmhok.supabase.co/functions/v1/nazarvpn-relays";
+    private static final String[] RELAY_SOURCES={RELAY_PROXY,VPNGATE};
+    private static final String RELAY_CACHE_FILE="nazarvpn_relays_cache.csv";''')
+
+          s=s.replace('private VpnProfile pendingProfile;', 'private VpnProfile pendingProfile;\n    private Runnable candidateWatchdog; private int candidateWatchdogIndex=-1;')
+
+          old_oncreate='@Override protected void onCreate(Bundle b){super.onCreate(b);prefs=getSharedPreferences("nazarvpn4",MODE_PRIVATE);'
+          new_oncreate='@Override protected void onCreate(Bundle b){super.onCreate(b);Preferences.getDefaultSharedPreferences(this).edit().putBoolean("disableconfirmation",true).apply();prefs=getSharedPreferences("nazarvpn4",MODE_PRIVATE);'
+          s=s.replace(old_oncreate,new_oncreate,1)
+
+          s=s.replace('Fast auto-selection • Live relay quality • Optional account','Smart failover • Live relay health • Privacy-first connection flow')
+          s=s.replace('Finding fastest server…','Checking secure routes…')
+          s=s.replace('Embedded OpenVPN / Android VpnService','OpenVPN engine • Android secure VPN tunnel')
+
+          old_fetch='''private List<Relay> fetchRelays(boolean warm) throws Exception{if(!relayCache.isEmpty()&&System.currentTimeMillis()-lastRelayFetch<CACHE_MS)return new ArrayList<>(relayCache);HttpURLConnection c=(HttpURLConnection)new URL(VPNGATE).openConnection();c.setConnectTimeout(6000);c.setReadTimeout(9000);c.setRequestProperty("User-Agent","NazarVPN/4.0 Android");if(c.getResponseCode()!=200)throw new Exception("VPN directory unavailable");List<Relay> out=new ArrayList<>();try(BufferedReader br=new BufferedReader(new InputStreamReader(c.getInputStream(),StandardCharsets.UTF_8))){String line;while((line=br.readLine())!=null){if(line.startsWith("*")||line.startsWith("#")||line.trim().isEmpty())continue;String[] p=line.split(",",15);if(p.length<15)continue;try{Relay r=new Relay();r.host=p[0];r.ip=p[1];r.score=parseLong(p[2]);r.ping=(int)parseLong(p[3]);r.speed=parseLong(p[4]);r.countryLong=p[5];r.countryShort=p[6];r.config=p[14];if(!r.config.isEmpty())out.add(r);}catch(Exception ignored){}}}finally{c.disconnect();}relayCache=out;lastRelayFetch=System.currentTimeMillis();bestByCountry.clear();for(Relay r:out){Relay old=bestByCountry.get(r.countryShort);if(old==null||rank(r)>rank(old))bestByCountry.put(r.countryShort,r);}return new ArrayList<>(out);}'''
+          new_fetch='''private List<Relay> fetchRelays(boolean warm) throws Exception{
+        if(!relayCache.isEmpty()&&System.currentTimeMillis()-lastRelayFetch<CACHE_MS)return new ArrayList<>(relayCache);
+        Exception last=null;
+        for(String source:RELAY_SOURCES){try{String csv=fetchDirectory(source);List<Relay> out=parseRelayCsv(csv);if(out.size()>=3){saveRelayCache(csv);return acceptRelays(out);}}catch(Exception e){last=e;}}
+        try{String csv=loadRelayCache();List<Relay> out=parseRelayCsv(csv);if(out.size()>=3)return acceptRelays(out);}catch(Exception ignored){}
+        try{String csv=loadBundledDirectory();List<Relay> out=parseRelayCsv(csv);if(out.size()>=3)return acceptRelays(out);}catch(Exception ignored){}
+        throw new Exception(last==null?"No relay directory is available":"All live directories failed; bundled relays were unavailable: "+safe(last));
+    }
+    private String fetchDirectory(String source)throws Exception{HttpURLConnection c=(HttpURLConnection)new URL(source).openConnection();c.setConnectTimeout(5500);c.setReadTimeout(8500);c.setInstanceFollowRedirects(true);c.setRequestProperty("User-Agent","NazarVPN/5.0 Android");if(source.equals(RELAY_PROXY))c.setRequestProperty("apikey",KEY);int code=c.getResponseCode();if(code!=200){c.disconnect();throw new Exception("Directory HTTP "+code);}StringBuilder b=new StringBuilder();try(BufferedReader br=new BufferedReader(new InputStreamReader(c.getInputStream(),StandardCharsets.UTF_8))){String line;while((line=br.readLine())!=null)b.append(line).append('\\n');}finally{c.disconnect();}String csv=b.toString();if(!csv.contains("#HostName,IP,Score,Ping,Speed,CountryLong,CountryShort")||!csv.contains("OpenVPN_ConfigData_Base64"))throw new Exception("Invalid relay directory");return csv;}
+    private List<Relay> parseRelayCsv(String csv)throws Exception{List<Relay> out=new ArrayList<>();try(BufferedReader br=new BufferedReader(new StringReader(csv))){String line;while((line=br.readLine())!=null){if(line.startsWith("*")||line.startsWith("#")||line.trim().isEmpty())continue;String[] p=line.split(",",15);if(p.length<15)continue;try{Relay r=new Relay();r.host=p[0];r.ip=p[1];r.score=parseLong(p[2]);r.ping=(int)parseLong(p[3]);r.speed=parseLong(p[4]);r.countryLong=p[5];r.countryShort=p[6];r.config=p[14];if(!r.config.isEmpty())out.add(r);}catch(Exception ignored){}}}return out;}
+    private List<Relay> acceptRelays(List<Relay> out){relayCache=out;lastRelayFetch=System.currentTimeMillis();bestByCountry.clear();for(Relay r:out){Relay old=bestByCountry.get(r.countryShort);if(old==null||rank(r)>rank(old))bestByCountry.put(r.countryShort,r);}return new ArrayList<>(out);}
+    private void saveRelayCache(String csv){try(java.io.OutputStream o=openFileOutput(RELAY_CACHE_FILE,MODE_PRIVATE)){o.write(csv.getBytes(StandardCharsets.UTF_8));}catch(Exception ignored){}}
+    private String loadRelayCache()throws Exception{try(InputStream in=openFileInput(RELAY_CACHE_FILE)){return readAll(in);}}
+    private String loadBundledDirectory()throws Exception{try(InputStream in=getAssets().open("nazarvpn_relays.csv")){return readAll(in);}}
+    private String readAll(InputStream in)throws Exception{StringBuilder b=new StringBuilder();try(BufferedReader br=new BufferedReader(new InputStreamReader(in,StandardCharsets.UTF_8))){String line;while((line=br.readLine())!=null)b.append(line).append('\\n');}return b.toString();}'''
+          if old_fetch not in s: raise SystemExit('fetchRelays signature block not found')
+          s=s.replace(old_fetch,new_fetch,1)
+
+          old_perm='''private void requestVpnPermission(){Intent i=VpnService.prepare(this);if(i!=null)startActivityForResult(i,REQ_VPN);else startPending();}'''
+          new_perm='''private void requestVpnPermission(){Intent i=VpnService.prepare(this);if(i==null){requestNotificationPermissionIfNeeded();startPending();return;}if(!prefs.getBoolean("vpn_permission_explained",false)){new AlertDialog.Builder(this).setTitle("Allow secure VPN connection").setMessage("Android requires one-time approval before NazarVPN can create a VPN tunnel. NazarVPN cannot enable this permission silently. Tap Continue, then approve the Android VPN connection dialog.").setPositiveButton("Continue",(d,w)->{prefs.edit().putBoolean("vpn_permission_explained",true).apply();requestVpnPermissionActual();}).setNegativeButton("Not now",(d,w)->failConnect("VPN permission is required to connect.")).show();}else requestVpnPermissionActual();}
+    private void requestVpnPermissionActual(){Intent i=VpnService.prepare(this);if(i!=null)startActivityForResult(i,REQ_VPN);else{requestNotificationPermissionIfNeeded();startPending();}}
+    private void requestNotificationPermissionIfNeeded(){if(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},502);}'''
+          if old_perm not in s: raise SystemExit('permission method not found')
+          s=s.replace(old_perm,new_perm,1)
+
+          s=s.replace('if(result==RESULT_OK)startPending();else failConnect("VPN permission is required.");','if(result==RESULT_OK){requestNotificationPermissionIfNeeded();startPending();}else failConnect("VPN permission is required.");',1)
+
+          old_start='''private void startPending(){try{VPNLaunchHelper.startOpenVpn(pendingProfile,getApplicationContext(),"NazarVPN Smart Connect",true);statusIf("Connecting to "+activeCountry+"…");}catch(Exception e){main.postDelayed(this::startNextCandidate,300);}}'''
+          new_start='''private void startPending(){try{VPNLaunchHelper.startOpenVpn(pendingProfile,getApplicationContext(),"NazarVPN Smart Connect",true);statusIf("Connecting to "+activeCountry+"…");armCandidateWatchdog();}catch(Exception e){cancelCandidateWatchdog();main.postDelayed(this::startNextCandidate,300);}}
+    private void armCandidateWatchdog(){cancelCandidateWatchdog();candidateWatchdogIndex=candidateIndex;candidateWatchdog=()->{if(connecting&&!connected&&candidateWatchdogIndex==candidateIndex){statusIf("Relay timed out — trying another…");disconnectInternal(true);main.postDelayed(()->{userDisconnect=false;startNextCandidate();},900);}};main.postDelayed(candidateWatchdog,12000);}
+    private void cancelCandidateWatchdog(){if(candidateWatchdog!=null)main.removeCallbacks(candidateWatchdog);candidateWatchdog=null;candidateWatchdogIndex=-1;}'''
+          if old_start not in s: raise SystemExit('startPending not found')
+          s=s.replace(old_start,new_start,1)
+
+          s=s.replace('if(level==ConnectionStatus.LEVEL_CONNECTED){connected=true;', 'if(level==ConnectionStatus.LEVEL_CONNECTED){cancelCandidateWatchdog();connected=true;',1)
+          s=s.replace('}else if(level==ConnectionStatus.LEVEL_NOTCONNECTED||level==ConnectionStatus.LEVEL_AUTH_FAILED){connected=false;', '}else if(level==ConnectionStatus.LEVEL_NOTCONNECTED||level==ConnectionStatus.LEVEL_AUTH_FAILED){cancelCandidateWatchdog();connected=false;',1)
+
+          old_fail='''private void failConnect(String m){connecting=false;connected=false;showScreen(HOME);new AlertDialog.Builder(this).setTitle("Could not connect").setMessage(m).setPositiveButton("OK",null).show();}'''
+          new_fail='''private void failConnect(String m){cancelCandidateWatchdog();connecting=false;connected=false;showScreen(HOME);new AlertDialog.Builder(this).setTitle("Connection unavailable").setMessage(m+"\\n\\nNazarVPN will normally retry alternate relays automatically. You can also switch to Auto for the widest fallback pool.").setPositiveButton("Try Auto",(d,w)->{selectedCode="AUTO";prefs.edit().putString("selected","AUTO").apply();toggle();}).setNegativeButton("Locations",(d,w)->showScreen(LOCATIONS)).setNeutralButton("Close",null).show();}'''
+          if old_fail not in s: raise SystemExit('failConnect not found')
+          s=s.replace(old_fail,new_fail,1)
+
+          # Manifest + app identity
           p=Path('engine/main/src/ui/AndroidManifest.xml')
-          s=p.read_text().replace('android:name=".activities.MainActivity"','android:name=".activities.NazarVPNActivity"',1)
-          p.write_text(s)
+          m=p.read_text()
+          m=m.replace('android:name=".activities.MainActivity"','android:name=".activities.NazarVPNActivity"',1)
+          if 'android.permission.POST_NOTIFICATIONS' not in m:
+              m=m.replace('<manifest', '<manifest', 1)
+              pos=m.find('>')+1
+              m=m[:pos]+'\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />'+m[pos:]
+          p.write_text(m)
+
           p=Path('engine/main/build.gradle.kts')
-          s=p.read_text().replace('defaultConfig {','defaultConfig {\n        applicationId = "com.nazarvpn.app"',1).replace('versionName = "0.7.64"','versionName = "4.1.0"',1)
-          p.write_text(s)
+          g=p.read_text().replace('defaultConfig {','defaultConfig {\n        applicationId = "com.nazarvpn.app"',1).replace('versionName = "0.7.64"','versionName = "5.0.0"',1)
+          p.write_text(g)
+
           for f in Path('engine/main/src').rglob('strings.xml'):
               try:
                   t=f.read_text().replace('<string name="app">OpenVPN for Android</string>','<string name="app">NazarVPN</string>').replace('<string name="app_name">OpenVPN for Android</string>','<string name="app_name">NazarVPN</string>')
                   f.write_text(t)
               except Exception: pass
+
           gp=Path('engine/gradle.properties')
           txt=gp.read_text() if gp.exists() else ''
           lines=[ln for ln in txt.splitlines() if not ln.startswith('org.gradle.jvmargs=') and not ln.startswith('org.gradle.workers.max=')]
-          lines += [
-              'org.gradle.jvmargs=-Xmx5g -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8',
-              'org.gradle.workers.max=2',
-              'org.gradle.parallel=false'
-          ]
-          gp.write_text('\n'.join(lines) + '\n')
+          lines += ['org.gradle.jvmargs=-Xmx5g -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8','org.gradle.workers.max=2','org.gradle.parallel=false']
+          gp.write_text('\n'.join(lines)+'\n')
           PY
       - name: Build universal APK and capture log
         run: |
           set +e
           cd engine
-          ./gradlew :main:assembleUiOvpn23Debug --stacktrace --no-daemon > ../v41-build.log 2>&1
+          ./gradlew :main:assembleUiOvpn23Debug --stacktrace --no-daemon > ../v5-build.log 2>&1
           CODE=$?
           cd ..
-          echo "$CODE" > v41-build.exit
-          tail -n 220 v41-build.log || true
+          echo "$CODE" > v5-build.exit
+          tail -n 260 v5-build.log || true
           exit 0
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NazarVPN-V4.1-build-log
+          name: NazarVPN-V5-build-log
           path: |
-            v41-build.log
-            v41-build.exit
+            v5-build.log
+            v5-build.exit
       - name: Fail if Gradle failed
-        run: test "$(cat v41-build.exit)" = "0"
+        run: test "$(cat v5-build.exit)" = "0"
       - name: Collect and verify APK
         run: |
           APK=$(find engine/main/build/outputs/apk -type f -name '*universal*.apk' | head -n 1)
           if [ -z "$APK" ]; then APK=$(find engine/main/build/outputs/apk -type f -name '*.apk' | head -n 1); fi
           test -n "$APK"
-          cp "$APK" NazarVPN_V4_1_CERTFIX.apk
-          unzip -t NazarVPN_V4_1_CERTFIX.apk >/dev/null
-          ls -lh NazarVPN_V4_1_CERTFIX.apk
-          sha256sum NazarVPN_V4_1_CERTFIX.apk
+          cp "$APK" NazarVPN_V5_GLOBAL.apk
+          unzip -t NazarVPN_V5_GLOBAL.apk >/dev/null
+          unzip -l NazarVPN_V5_GLOBAL.apk | grep -q 'assets/nazarvpn_relays.csv'
+          ls -lh NazarVPN_V5_GLOBAL.apk
+          sha256sum NazarVPN_V5_GLOBAL.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: NazarVPN-V4.1-CERTFIX
-          path: NazarVPN_V4_1_CERTFIX.apk
+          name: NazarVPN-V5-GLOBAL
+          path: NazarVPN_V5_GLOBAL.apk
           if-no-files-found: error
