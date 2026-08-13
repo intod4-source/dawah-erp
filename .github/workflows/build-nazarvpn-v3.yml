@@ -75,7 +75,8 @@ jobs:
           p=Path('engine/main/src/ui/AndroidManifest.xml')
           m=p.read_text().replace('android:name=".activities.MainActivity"','android:name=".activities.NazarVPNActivity"',1)
           if 'android.permission.POST_NOTIFICATIONS' not in m:
-              pos=m.find('>')+1
+              start=m.find('<manifest')
+              pos=m.find('>',start)+1
               m=m[:pos]+'\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />'+m[pos:]
           p.write_text(m)
 
