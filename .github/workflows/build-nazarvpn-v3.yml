@@ -1,4 +1,4 @@
-name: Build NazarVPN V4
+name: Build NazarVPN V4.1
 
 on:
   push:
@@ -25,16 +25,24 @@ jobs:
           sudo apt-get install -y -qq swig cmake ninja-build
       - name: Checkout OpenVPN Android engine
         run: git clone --depth 1 --recurse-submodules https://github.com/schwabe/ics-openvpn.git engine
-      - name: Apply NazarVPN V4 branding and UI
+      - name: Apply NazarVPN V4.1 branding, UI and relay proxy fix
         run: |
           cp v4/NazarVPNActivity.java engine/main/src/ui/java/de/blinkt/openvpn/activities/NazarVPNActivity.java
           python3 - <<'PY'
           from pathlib import Path
+          a=Path('engine/main/src/ui/java/de/blinkt/openvpn/activities/NazarVPNActivity.java')
+          s=a.read_text()
+          s=s.replace('private static final String VPNGATE="https://www.vpngate.net/api/iphone/";', 'private static final String VPNGATE="https://cdidgehrcnapaqdxmhok.supabase.co/functions/v1/nazarvpn-relays";', 1)
+          needle='c.setRequestProperty("User-Agent","NazarVPN/4.0 Android");'
+          repl='c.setRequestProperty("User-Agent","NazarVPN/4.1 Android");c.setRequestProperty("apikey",KEY);'
+          s=s.replace(needle,repl,1)
+          a.write_text(s)
+
           p=Path('engine/main/src/ui/AndroidManifest.xml')
           s=p.read_text().replace('android:name=".activities.MainActivity"','android:name=".activities.NazarVPNActivity"',1)
           p.write_text(s)
           p=Path('engine/main/build.gradle.kts')
-          s=p.read_text().replace('defaultConfig {','defaultConfig {\n        applicationId = "com.nazarvpn.app"',1).replace('versionName = "0.7.64"','versionName = "4.0.0"',1)
+          s=p.read_text().replace('defaultConfig {','defaultConfig {\n        applicationId = "com.nazarvpn.app"',1).replace('versionName = "0.7.64"','versionName = "4.1.0"',1)
           p.write_text(s)
           for f in Path('engine/main/src').rglob('strings.xml'):
               try:
@@ -55,33 +63,33 @@ jobs:
         run: |
           set +e
           cd engine
-          ./gradlew :main:assembleUiOvpn23Debug --stacktrace --no-daemon > ../v4-build.log 2>&1
+          ./gradlew :main:assembleUiOvpn23Debug --stacktrace --no-daemon > ../v41-build.log 2>&1
           CODE=$?
           cd ..
-          echo "$CODE" > v4-build.exit
-          tail -n 220 v4-build.log || true
+          echo "$CODE" > v41-build.exit
+          tail -n 220 v41-build.log || true
           exit 0
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NazarVPN-V4-build-log
+          name: NazarVPN-V4.1-build-log
           path: |
-            v4-build.log
-            v4-build.exit
+            v41-build.log
+            v41-build.exit
       - name: Fail if Gradle failed
-        run: test "$(cat v4-build.exit)" = "0"
+        run: test "$(cat v41-build.exit)" = "0"
       - name: Collect and verify APK
         run: |
           APK=$(find engine/main/build/outputs/apk -type f -name '*universal*.apk' | head -n 1)
           if [ -z "$APK" ]; then APK=$(find engine/main/build/outputs/apk -type f -name '*.apk' | head -n 1); fi
           test -n "$APK"
-          cp "$APK" NazarVPN_V4_FINAL.apk
-          unzip -t NazarVPN_V4_FINAL.apk >/dev/null
-          ls -lh NazarVPN_V4_FINAL.apk
-          sha256sum NazarVPN_V4_FINAL.apk
+          cp "$APK" NazarVPN_V4_1_CERTFIX.apk
+          unzip -t NazarVPN_V4_1_CERTFIX.apk >/dev/null
+          ls -lh NazarVPN_V4_1_CERTFIX.apk
+          sha256sum NazarVPN_V4_1_CERTFIX.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: NazarVPN-V4-FINAL
-          path: NazarVPN_V4_FINAL.apk
+          name: NazarVPN-V4.1-CERTFIX
+          path: NazarVPN_V4_1_CERTFIX.apk
           if-no-files-found: error
