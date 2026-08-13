@@ -41,6 +41,19 @@ jobs:
                   t=f.read_text().replace('<string name="app">OpenVPN for Android</string>','<string name="app">NazarVPN</string>').replace('<string name="app_name">OpenVPN for Android</string>','<string name="app_name">NazarVPN</string>')
                   f.write_text(t)
               except Exception: pass
+
+          # Keep packaging inside the hosted runner memory envelope. The previous
+          # build reached the final APK packaging task but exhausted the default
+          # Gradle heap. Set a larger heap and reduce parallel workers.
+          gp=Path('engine/gradle.properties')
+          txt=gp.read_text() if gp.exists() else ''
+          lines=[ln for ln in txt.splitlines() if not ln.startswith('org.gradle.jvmargs=') and not ln.startswith('org.gradle.workers.max=')]
+          lines += [
+              'org.gradle.jvmargs=-Xmx5g -XX:MaxMetaspaceSize=1024m -Dfile.encoding=UTF-8',
+              'org.gradle.workers.max=2',
+              'org.gradle.parallel=false'
+          ]
+          gp.write_text('\n'.join(lines) + '\n')
           PY
       - name: Build universal APK and capture log
         id: gradle_build
