@@ -1,8 +1,8 @@
-name: Build NazarVPN V3
+name: Build NazarVPN V4
 
 on:
   push:
-    branches: [nazarvpn-v3-vpngate]
+    branches: [nazarvpn-v4-auth-admin]
   workflow_dispatch:
 
 jobs:
@@ -25,26 +25,22 @@ jobs:
           sudo apt-get install -y -qq swig cmake ninja-build
       - name: Checkout OpenVPN Android engine
         run: git clone --depth 1 --recurse-submodules https://github.com/schwabe/ics-openvpn.git engine
-      - name: Apply NazarVPN branding and UI
+      - name: Apply NazarVPN V4 branding and UI
         run: |
-          cp v3/NazarVPNActivity.java engine/main/src/ui/java/de/blinkt/openvpn/activities/NazarVPNActivity.java
+          cp v4/NazarVPNActivity.java engine/main/src/ui/java/de/blinkt/openvpn/activities/NazarVPNActivity.java
           python3 - <<'PY'
           from pathlib import Path
           p=Path('engine/main/src/ui/AndroidManifest.xml')
           s=p.read_text().replace('android:name=".activities.MainActivity"','android:name=".activities.NazarVPNActivity"',1)
           p.write_text(s)
           p=Path('engine/main/build.gradle.kts')
-          s=p.read_text().replace('defaultConfig {','defaultConfig {\n        applicationId = "com.nazarvpn.app"',1).replace('versionName = "0.7.64"','versionName = "3.0.0"',1)
+          s=p.read_text().replace('defaultConfig {','defaultConfig {\n        applicationId = "com.nazarvpn.app"',1).replace('versionName = "0.7.64"','versionName = "4.0.0"',1)
           p.write_text(s)
           for f in Path('engine/main/src').rglob('strings.xml'):
               try:
                   t=f.read_text().replace('<string name="app">OpenVPN for Android</string>','<string name="app">NazarVPN</string>').replace('<string name="app_name">OpenVPN for Android</string>','<string name="app_name">NazarVPN</string>')
                   f.write_text(t)
               except Exception: pass
-
-          # Keep packaging inside the hosted runner memory envelope. The previous
-          # build reached the final APK packaging task but exhausted the default
-          # Gradle heap. Set a larger heap and reduce parallel workers.
           gp=Path('engine/gradle.properties')
           txt=gp.read_text() if gp.exists() else ''
           lines=[ln for ln in txt.splitlines() if not ln.startswith('org.gradle.jvmargs=') and not ln.startswith('org.gradle.workers.max=')]
@@ -56,39 +52,36 @@ jobs:
           gp.write_text('\n'.join(lines) + '\n')
           PY
       - name: Build universal APK and capture log
-        id: gradle_build
         run: |
           set +e
           cd engine
-          ./gradlew :main:assembleUiOvpn23Debug --stacktrace --no-daemon > ../v3-build.log 2>&1
+          ./gradlew :main:assembleUiOvpn23Debug --stacktrace --no-daemon > ../v4-build.log 2>&1
           CODE=$?
           cd ..
-          echo "$CODE" > v3-build.exit
-          tail -n 200 v3-build.log || true
+          echo "$CODE" > v4-build.exit
+          tail -n 220 v4-build.log || true
           exit 0
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: NazarVPN-V3-build-log
+          name: NazarVPN-V4-build-log
           path: |
-            v3-build.log
-            v3-build.exit
+            v4-build.log
+            v4-build.exit
       - name: Fail if Gradle failed
-        run: |
-          test "$(cat v3-build.exit)" = "0"
+        run: test "$(cat v4-build.exit)" = "0"
       - name: Collect and verify APK
         run: |
-          find engine/main/build/outputs/apk -type f -name '*.apk' -print
           APK=$(find engine/main/build/outputs/apk -type f -name '*universal*.apk' | head -n 1)
           if [ -z "$APK" ]; then APK=$(find engine/main/build/outputs/apk -type f -name '*.apk' | head -n 1); fi
           test -n "$APK"
-          cp "$APK" NazarVPN_V3_VPNGate.apk
-          unzip -t NazarVPN_V3_VPNGate.apk >/dev/null
-          ls -lh NazarVPN_V3_VPNGate.apk
-          sha256sum NazarVPN_V3_VPNGate.apk
+          cp "$APK" NazarVPN_V4_FINAL.apk
+          unzip -t NazarVPN_V4_FINAL.apk >/dev/null
+          ls -lh NazarVPN_V4_FINAL.apk
+          sha256sum NazarVPN_V4_FINAL.apk
       - uses: actions/upload-artifact@v4
         with:
-          name: NazarVPN-V3-VPNGate
-          path: NazarVPN_V3_VPNGate.apk
+          name: NazarVPN-V4-FINAL
+          path: NazarVPN_V4_FINAL.apk
           if-no-files-found: error
