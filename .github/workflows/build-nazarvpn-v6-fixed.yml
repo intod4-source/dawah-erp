@@ -1,0 +1,52 @@
+name: Build NazarVPN V6 Fixed
+on:
+  push:
+    branches: [nazarvpn-v6-resilient]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: nazarvpn-v6-resilient
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-37" "build-tools;37.0.0" "ndk;30.0.14904198" || true
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq swig cmake ninja-build
+      - name: Checkout engine
+        run: git clone --depth 1 --recurse-submodules https://github.com/schwabe/ics-openvpn.git engine
+      - name: Apply NazarVPN
+        run: |
+          cp v4/NazarVPNActivity.java engine/main/src/ui/java/de/blinkt/openvpn/activities/NazarVPNActivity.java
+          mkdir -p engine/main/src/main/assets
+          cp v5-relays/vpngate.csv engine/main/src/main/assets/vpngate.csv
+          python3 v6/patch.py
+      - name: Build
+        run: |
+          cd engine
+          ./gradlew :main:assembleUiOvpn23Debug --stacktrace --no-daemon
+      - name: Verify
+        run: |
+          APK=$(find engine/main/build/outputs/apk -type f -name '*universal*.apk' | head -n 1)
+          if [ -z "$APK" ]; then APK=$(find engine/main/build/outputs/apk -type f -name '*.apk' | head -n 1); fi
+          test -n "$APK"
+          cp "$APK" NazarVPN_V6_RESILIENT.apk
+          unzip -t NazarVPN_V6_RESILIENT.apk >/dev/null
+          test $(stat -c%s NazarVPN_V6_RESILIENT.apk) -gt 10000000
+          sha256sum NazarVPN_V6_RESILIENT.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NazarVPN-V6-RESILIENT-FIXED
+          path: NazarVPN_V6_RESILIENT.apk
+          if-no-files-found: error
